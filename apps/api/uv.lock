@@ -1117,6 +1117,7 @@ dependencies = [
     { name = "langchain-community" },
     { name = "langchain-openai" },
     { name = "langgraph" },
+    { name = "numpy" },
     { name = "pypdf" },
     { name = "python-dotenv" },
 ]
@@ -1129,6 +1130,7 @@ requires-dist = [
     { name = "langchain-community", specifier = ">=0.4.2" },
     { name = "langchain-openai", specifier = ">=1.6.4" },
     { name = "langgraph", specifier = ">=1.2.12" },
+    { name = "numpy", specifier = ">=2.5.3" },
     { name = "pypdf", specifier = ">=6.19.0" },
     { name = "python-dotenv", specifier = ">=1.2.3" },
 ]

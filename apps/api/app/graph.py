@@ -1,103 +1,80 @@
-import csv
-from langgraph.graph import END, START, StateGraph
-from langchain_core.tools import tool
 from typing import Literal
-from itertools import islice
-from pathlib import Path
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
 
-from .state import GraphState
+from dotenv import load_dotenv
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
+from langgraph.graph import START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
+
+from .utils.anomaly import calculate_anomaly
+from .utils.signal import load_signal
+
 
 load_dotenv()
 
-DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 
-
-def respond(state: GraphState) -> dict[str, str]:
-    return {"response": f"LangGraph received: {state['message']}"}
-
-# csv 읽는 유틸 함수
-def load_signal(
-    sensor: Literal["vibration", "current"],
-    dataset: Literal["normal", "anomaly"],
-    index: int,
-) -> dict:
-    """CSV에서 센서 데이터 한 건을 읽어 반환한다."""
-    if index < 0:
-        raise ValueError("index는 0 이상이어야 합니다.")
-
-    path = DATA_DIR / f"{sensor}_{dataset}.csv"
-
-    with path.open(encoding="utf-8-sig", newline="") as file:
-        reader = csv.reader(file)
-        header = next(reader)
-        row = next(islice(reader, index, index + 1), None)
-
-    if row is None:
-        raise ValueError(f"{path.name}에 {index}번 샘플이 없습니다.")
-
-    return {
-        "sensor": sensor,
-        "dataset": dataset,
-        "index": index,
-        "timestamp": row[0],
-        "frequencies": [float(value) for value in header[1:]],
-        "values": [float(value) for value in row[1:]],
-    }
-
-
-# @tool
-# def read_signal(
-#     sensor: Literal["vibration", "current"],
-#     dataset: Literal["normal", "anomaly"],
-#     index: int,
-# ) -> dict:
-#     """센서 종류, 데이터셋 종류, 샘플 번호로 CSV에서 측정 데이터 한 건을 조회한다."""
-#     return load_signal(sensor, dataset, index)
-
-
+# 1. 사용할 도구 정의
 @tool
 def detect_anomaly(
     sensor: Literal["vibration", "current"],
     dataset: Literal["normal", "anomaly"],
     index: int,
-) -> any:
+) -> dict:
     """지정한 센서 샘플의 이상 여부를 분석한다."""
-
     signal = load_signal(sensor, dataset, index)
 
-    values = signal["values"]
-
-    # 이상 현상 감지 로직
+    score, threshold, is_anomaly = calculate_anomaly(
+        sensor,
+        signal["values"],
+    )
 
     return {
         "sensor": sensor,
+        "dataset": dataset,
         "index": index,
         "timestamp": signal["timestamp"],
+        "score": score,
+        "threshold": threshold,
+        "is_anomaly": is_anomaly,
     }
 
 
-
+# 2. 모델 생성
 model = ChatOpenAI(
     model="gpt-4.1-mini",
     temperature=0,
 )
 
+
+# 3. 모델에 도구 알려주기
 tools = [detect_anomaly]
 model_with_tools = model.bind_tools(tools)
 
-builder = StateGraph(GraphState)
-builder.add_node("respond", respond)
-builder.add_edge(START, "respond")
-builder.add_edge("respond", END)
 
+# 4. 모델 노드 함수
+def call_model(state: MessagesState) -> dict:
+    response = model_with_tools.invoke(state["messages"])
+    return {"messages": [response]}
+
+
+# 5. 도구 실행 노드 생성
+tool_node = ToolNode(tools)
+
+
+# 6. 그래프 생성
+builder = StateGraph(MessagesState)
+
+
+# 7. 그래프에 노드 등록
+builder.add_node("model", call_model)
+builder.add_node("tools", tool_node)
+
+
+# 8. 노드 연결
+builder.add_edge(START, "model")
+builder.add_conditional_edges("model", tools_condition)
+builder.add_edge("tools", "model")
+
+
+# 9. 실행 가능한 그래프로 완성
 graph = builder.compile()
-
-
-# if __name__ == "__main__":
-#     result = model_with_tools.invoke(
-#         "current normal 데이터의 8201번 샘플을 읽어줘."
-#     )
-
-#     print(result.tool_calls)

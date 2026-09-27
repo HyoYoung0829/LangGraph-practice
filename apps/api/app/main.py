@@ -71,4 +71,7 @@ def get_signal(
 # 랭그래프 호출
 @app.post("/graph")
 async def run_graph(request: GraphRequest) -> dict[str, str]:
-    return await graph.ainvoke({"message": request.message, "response": ""})
+    result = await graph.ainvoke({
+        "messages": [("user", request.message)],
+    })
+    return {"response": result["messages"][-1].content}
